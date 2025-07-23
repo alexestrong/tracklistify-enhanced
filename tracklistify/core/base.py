@@ -49,30 +49,38 @@ class AsyncApp:
     async def process_input(self, input_path: str):
         """Process input URL or file path."""
         try:
-            # Validate input URL
-            url = validate_input(input_path)
-            if url is None:
-                raise ValueError("Invalid URL provided")
+            # Validate input (local file or URL)
+            validated_input = validate_input(input_path)
+            if validated_input is None:
+                raise ValueError("Invalid input: must be a valid audio file path or URL")
 
-            self.logger.info(f"Validated URL: {url}")
+            self.logger.info(f"Validated input: {validated_input}")
 
-            # Create downloader
-            downloader = self.downloader_factory.create_downloader(url)
-            if downloader is None:
-                raise ValueError("Failed to create downloader")
+            # Check if input is a local file or URL
+            local_path = None
+            if Path(validated_input).exists():
+                # It's a local file, use it directly
+                local_path = validated_input
+                self.original_title = Path(local_path).stem
+                self.logger.info(f"Using local audio file: {local_path}")
+            else:
+                # It's a URL, use downloader
+                downloader = self.downloader_factory.create_downloader(validated_input)
+                if downloader is None:
+                    raise ValueError("Failed to create downloader")
 
-            self.logger.info("Downloading audio...")
+                self.logger.info("Downloading audio...")
 
-            # Download audio file
-            local_path = await downloader.download(url)
-            if local_path is None:
-                raise ValueError("local_path cannot be None")
+                # Download audio file
+                local_path = await downloader.download(validated_input)
+                if local_path is None:
+                    raise ValueError("local_path cannot be None")
 
-            self.logger.info(f"Downloaded audio to: {local_path}")
+                self.logger.info(f"Downloaded audio to: {local_path}")
 
-            # Store original title for output
-            self.logger.debug(f"Storing original title: {local_path}")
-            self.original_title = getattr(downloader, "title", Path(local_path).stem)
+                # Store original title for output
+                self.logger.debug(f"Storing original title: {local_path}")
+                self.original_title = getattr(downloader, "title", Path(local_path).stem)
 
             self.logger.info("Processing audio...")
 
