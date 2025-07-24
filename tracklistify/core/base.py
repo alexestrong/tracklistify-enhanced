@@ -130,18 +130,54 @@ class AsyncApp:
         import subprocess
         from concurrent.futures import ThreadPoolExecutor
         from pathlib import Path
-        from mutagen._file import File
-
-        audio = File(file_path)
-        if audio is None:
-            self.logger.error(f"Could not read audio file: {file_path}")
-            return []
-
+        
+        # Try to read audio file with mutagen first
+        duration = None
         try:
-            duration = audio.info.length  # Duration in seconds
+            from mutagen import File
+            audio = File(file_path)
+            if audio is not None:
+                duration = getattr(audio.info, 'length', None)
+                if duration and duration > 0:
+                    self.logger.debug(f"Audio file duration from mutagen: {duration} seconds")
+                else:
+                    self.logger.warning(f"Mutagen returned invalid duration: {duration}")
+                    duration = None
 
-        except AttributeError:
-            self.logger.error("Could not determine audio duration")
+        except ImportError:
+            self.logger.warning("Mutagen library not available, will try ffprobe")
+        except Exception as e:
+            self.logger.warning(f"Error reading audio file with mutagen: {e}, will try ffprobe")
+
+        # Fallback to ffprobe if mutagen failed
+        if duration is None or duration <= 0:
+            self.logger.info("Trying ffprobe to get audio duration...")
+            try:
+                result = subprocess.run([
+                    "ffprobe", "-v", "quiet", "-show_entries", "format=duration", 
+                    "-of", "csv=p=0", file_path
+                ], capture_output=True, text=True, check=True)
+                
+                duration_str = result.stdout.strip()
+                if duration_str:
+                    duration = float(duration_str)
+                    self.logger.debug(f"Audio file duration from ffprobe: {duration} seconds")
+                else:
+                    self.logger.error("ffprobe returned empty duration")
+                    return []
+                    
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"ffprobe failed: {e.stderr}")
+                return []
+            except ValueError as e:
+                self.logger.error(f"Could not parse duration from ffprobe: {e}")
+                return []
+            except FileNotFoundError:
+                self.logger.error("ffprobe not found - please install ffmpeg")
+                return []
+
+        if duration is None or duration <= 0:
+            self.logger.error(f"Could not determine valid audio duration: {duration}")
             return []
 
         # Get configuration for segmentation from instance
@@ -157,6 +193,7 @@ class AsyncApp:
         base_cmd = [
             "ffmpeg",
             "-hide_banner",
+            "-nostdin",  # Disable stdin processing (can break the shell)
             "-loglevel",
             "error",
             "-i",
@@ -255,14 +292,21 @@ class AsyncApp:
         # Process segments in parallel using ThreadPoolExecutor
         segments = []
         try:
+            # Check if we have any segments to process
+            if not segment_params:
+                self.logger.error("No segments to process - segment_params is empty")
+                self.logger.debug(f"Audio duration: {duration}, segment_duration: {segment_duration}, overlap_duration: {overlap_duration}")
+                return []
+
             # Ensure os.cpu_count() does not return None
             cpu_count = os.cpu_count()
             if cpu_count is None:
-                raise ValueError("os.cpu_count() returned None")
+                self.logger.warning("os.cpu_count() returned None, defaulting to 2 workers")
+                cpu_count = 2
 
-            # Use more workers for better parallelization
-            max_workers = min(cpu_count * 2, len(segment_params))
-            self.logger.debug(f"Processing segments with {max_workers} workers")
+            # Use more workers for better parallelization, ensure max_workers > 0
+            max_workers = min(max(1, cpu_count * 2), len(segment_params))
+            self.logger.debug(f"Processing {len(segment_params)} segments with {max_workers} workers")
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all tasks and gather results
@@ -271,11 +315,13 @@ class AsyncApp:
                 # Filter out failed segments
                 segments = [seg for seg in future_segments if seg is not None]
 
-            self.logger.info(f"Split audio into {len(segments)} segments")
+            self.logger.info(f"Split audio into {len(segments)} segments (created {len(segment_params)} total)")
             return segments
 
         except Exception as e:
             self.logger.error(f"Failed to process segments: {e}")
+            if self.config.debug:
+                self.logger.error(traceback.format_exc())
             return []
 
     async def save_output(self, tracks: List["Track"], format: str):

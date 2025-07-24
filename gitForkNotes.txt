@@ -1,0 +1,10 @@
+Pull updates from the original: 
+git fetch upstream && git merge upstream/main
+
+Push your work: 
+git push
+
+
+Detach from original remote:
+git remote set-url origin https://github.com/alexestrong/tracklistify-enhanced.git
+git push -u origin main
