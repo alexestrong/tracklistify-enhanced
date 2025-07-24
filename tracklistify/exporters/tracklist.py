@@ -21,13 +21,14 @@ logger = get_logger(__name__)
 class TracklistOutput:
     """Handles tracklist output in various formats."""
 
-    def __init__(self, mix_info: dict, tracks: List[Track]):
+    def __init__(self, mix_info: dict, tracks: List[Track], processing_time: Optional[float] = None):
         """
         Initialize with mix information and tracks.
 
         Args:
             mix_info: Dictionary containing mix metadata
             tracks: List of identified tracks
+            processing_time: Time taken to process the audio in seconds
 
         Raises:
             ExportError: If tracks is None or empty
@@ -37,6 +38,7 @@ class TracklistOutput:
 
         self.mix_info = mix_info or {}
         self.tracks = tracks
+        self.processing_time = processing_time
         self._config = get_config()
         self.output_dir = Path(self._config.output_dir)
         self.output_dir.mkdir(exist_ok=True)
@@ -136,16 +138,23 @@ class TracklistOutput:
                 min_confidence = min(confidences)
                 max_confidence = max(confidences)
 
+        # Prepare analysis_info with processing time
+        analysis_info = {
+            "timestamp": datetime.now().isoformat(),
+            "track_count": track_count,
+            "average_confidence": avg_confidence,
+            "min_confidence": min_confidence,
+            "max_confidence": max_confidence,
+        }
+        
+        # Add processing time if available
+        if self.processing_time is not None:
+            analysis_info["processing_time"] = self.processing_time
+
         data = {
             "mix_info": self.mix_info or {},
             "track_count": track_count,
-            "analysis_info": {
-                "timestamp": datetime.now().isoformat(),
-                "track_count": track_count,
-                "average_confidence": avg_confidence,
-                "min_confidence": min_confidence,
-                "max_confidence": max_confidence,
-            },
+            "analysis_info": analysis_info,
             "tracks": [
                 {
                     "song_name": track.song_name,
@@ -170,6 +179,15 @@ class TracklistOutput:
             f"- Confidence range: {data['analysis_info']['min_confidence']:.1f}%"
             f" - {data['analysis_info']['max_confidence']:.1f}%"
         )
+        
+        # Add processing time if available
+        if self.processing_time is not None:
+            minutes, seconds = divmod(self.processing_time, 60)
+            if minutes > 0:
+                logger.info(f"- Processing time: {int(minutes)}m {seconds:.1f}s")
+            else:
+                logger.info(f"- Processing time: {seconds:.1f}s")
+        
         logger.info(f"Saved JSON tracklist to: {output_file}")
         return output_file
 

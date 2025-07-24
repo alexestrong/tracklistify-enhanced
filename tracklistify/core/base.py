@@ -48,6 +48,11 @@ class AsyncApp:
 
     async def process_input(self, input_path: str):
         """Process input URL or file path."""
+        import time
+        
+        # Start timing
+        start_time = time.time()
+        
         try:
             # Validate input (local file or URL)
             validated_input = validate_input(input_path)
@@ -100,10 +105,14 @@ class AsyncApp:
             self.logger.info(f"Identified {len(tracks)} tracks")
             self.logger.debug(f"Tracks: {tracks}")
 
+            # Calculate processing time
+            end_time = time.time()
+            processing_time = end_time - start_time
+
             # Only save if we have identified tracks
             self.logger.info("Saving output...")
             if len(tracks) > 0:
-                await self.save_output(tracks, self.config.output_format)
+                await self.save_output(tracks, self.config.output_format, processing_time)
             else:
                 raise ValueError(
                     "No tracks were successfully identified with sufficient confidence"
@@ -324,12 +333,13 @@ class AsyncApp:
                 self.logger.error(traceback.format_exc())
             return []
 
-    async def save_output(self, tracks: List["Track"], format: str):
+    async def save_output(self, tracks: List["Track"], format: str, processing_time: float = None):
         """Save identified tracks to output files.
 
         Args:
             tracks: List of identified tracks
             format: Output format (json, markdown, m3u)
+            processing_time: Time taken to process the audio in seconds
 
         Raises:
             ValueError: If tracks list is empty
@@ -355,8 +365,8 @@ class AsyncApp:
         }
 
         try:
-            # Create output handler
-            output = TracklistOutput(mix_info=mix_info, tracks=tracks)
+            # Create output handler with processing time
+            output = TracklistOutput(mix_info=mix_info, tracks=tracks, processing_time=processing_time)
 
             # Save in specified format
             if format == "all":
